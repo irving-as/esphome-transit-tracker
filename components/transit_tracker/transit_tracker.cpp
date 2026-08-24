@@ -496,7 +496,7 @@ void TransitTracker::draw_trip(
 }
 
 void HOT TransitTracker::draw_schedule() {
-  if (this->display_ == nullptr) {
+  if (this->display_ == nullptr) [[unlikely]] {
     ESP_LOGW(TAG, "No display attached, cannot draw schedule");
     return;
   }
