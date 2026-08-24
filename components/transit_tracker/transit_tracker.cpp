@@ -129,8 +129,8 @@ void TransitTracker::setup() {
     }
 
     if (has_stale_trips) {
-      ESP_LOGW(TAG, "Stale trips detected (rtc=%d, last_heartbeat=%lu, uptime=%lu)",
-               now.timestamp, this->last_heartbeat_.load(), millis());
+      ESP_LOGW(TAG, "Stale trips detected (rtc=%lld, last_heartbeat=%lu, uptime=%lu)",
+               (long long) now.timestamp, this->last_heartbeat_.load(), millis());
     }
   });
 }
