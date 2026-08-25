@@ -49,6 +49,22 @@ class TransitTracker : public Component {
     void set_schedule_string(const std::string &schedule_string) { schedule_string_ = schedule_string; }
     void set_list_mode(const std::string &list_mode) { list_mode_ = list_mode; }
     void set_limit(int limit) { limit_ = limit; }
+    void set_arrival_time_window(int arrival_time_window) {
+      arrival_time_window_ = arrival_time_window;
+      this->reset_paging_state_();
+    }
+    void set_page_transition(const std::string &page_transition) {
+      page_transition_ = page_transition;
+      this->reset_paging_state_();
+    }
+    void set_page_duration(unsigned long page_duration) {
+      page_duration_ = page_duration;
+      this->reset_paging_state_();
+    }
+    void set_transition_duration(unsigned long transition_duration) {
+      transition_duration_ = transition_duration;
+      this->reset_paging_state_();
+    }
     void set_scroll_headsigns(bool scroll_headsigns) { scroll_headsigns_ = scroll_headsigns; }
 
     void set_header_text(const std::string &header_text) { header_text_ = header_text; }
@@ -70,11 +86,12 @@ class TransitTracker : public Component {
 
     std::string from_now_(time_t unix_timestamp, uint rtc_now) const;
     void draw_text_centered_(const char *text, Color color);
-    void draw_realtime_icon_(int bottom_right_x, int bottom_right_y, unsigned long now);
+    void draw_realtime_icon_(int bottom_right_x, int bottom_right_y, unsigned long now, float brightness = 1.0f);
 
     void draw_trip(
       const Trip &trip, int y_offset, int font_height, unsigned long uptime, uint rtc_now,
-      bool no_draw = false, int *headsign_overflow_out = nullptr, int scroll_cycle_duration = 0
+      bool no_draw = false, int *headsign_overflow_out = nullptr, int scroll_cycle_duration = 0,
+      float brightness = 1.0f
     );
 
     Localization localization_{};
@@ -89,6 +106,12 @@ class TransitTracker : public Component {
     void handle_message_(const std::string &payload);
     void send_subscribe_();
     void on_disconnect_();
+    void reset_paging_state_() {
+      current_arrival_page_ = 0;
+      previous_arrival_page_ = 0;
+      arrival_page_count_ = 0;
+      last_arrival_page_change_ = 0;
+    }
 
     std::atomic<int> consecutive_disconnects_{0};
     std::atomic<unsigned long> last_heartbeat_{0};
@@ -103,6 +126,14 @@ class TransitTracker : public Component {
     std::string list_mode_;
     bool display_departure_times_ = true;
     int limit_;
+    int arrival_time_window_ = 0;
+    size_t current_arrival_page_ = 0;
+    size_t previous_arrival_page_ = 0;
+    size_t arrival_page_count_ = 0;
+    unsigned long last_arrival_page_change_ = 0;
+    std::string page_transition_ = "none";
+    unsigned long page_duration_ = 5000;
+    unsigned long transition_duration_ = 700;
 
     std::string header_text_;
     std::map<std::string, std::string> abbreviations_;

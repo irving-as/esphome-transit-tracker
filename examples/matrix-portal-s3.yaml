@@ -79,6 +79,10 @@ transit_tracker:
   base_url: "wss://tt.horner.tj/"
   limit: 3
   feed_code: "st"
+  arrival_time_window: 30
+  page_transition: fade
+  page_duration: 5000
+  transition_duration: 700
   stops:
     - stop_id: "1_71971" # Redmond Way & Bear Creek Pkwy
       time_offset: -8min

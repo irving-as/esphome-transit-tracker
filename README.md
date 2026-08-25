@@ -48,6 +48,19 @@ transit_tracker:
   # Maximum number of arrivals to show
   limit: 3
 
+  # Rotate through pages of up to 20 trips arriving or departing within
+  # this many minutes. Set to 0 to disable rotation.
+  arrival_time_window: 30
+
+  # Animation used when changing pages: none, fade, or scroll
+  page_transition: fade
+
+  # How long each page remains fully visible, in milliseconds
+  page_duration: 5000
+
+  # Length of the fade or scroll animation, in milliseconds
+  transition_duration: 700
+
   # Whether to display arrival or departure times
   time_display: departure # or "arrival"
 

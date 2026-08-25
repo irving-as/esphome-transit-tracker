@@ -38,6 +38,10 @@ CONF_DEFAULT_ROUTE_COLOR = "default_route_color"
 CONF_REALTIME_COLOR = "realtime_color"
 CONF_TIME_DISPLAY = "time_display"
 CONF_LIST_MODE = "list_mode"
+CONF_ARRIVAL_TIME_WINDOW = "arrival_time_window"
+CONF_PAGE_TRANSITION = "page_transition"
+CONF_PAGE_DURATION = "page_duration"
+CONF_TRANSITION_DURATION = "transition_duration"
 CONF_SCROLL_HEADSIGNS = "scroll_headsigns"
 CONF_HEADERS = "headers"
 CONF_HEADER_TEXT = "header_text"
@@ -82,13 +86,25 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_FONT_ID): cv.use_id(Font),
             cv.GenerateID(CONF_TIME_ID): cv.use_id(RealTimeClock),
             cv.Optional(CONF_BASE_URL): validate_ws_url,
-            cv.Optional(CONF_LIMIT, default=3): cv.positive_int,
+            cv.Optional(CONF_LIMIT, default=3): cv.int_range(min=1),
             cv.Optional(CONF_FEED_CODE, default=""): cv.string,
             cv.Optional(CONF_TIME_DISPLAY, default="departure"): cv.one_of(
                 "departure", "arrival"
             ),
             cv.Optional(CONF_LIST_MODE, default="sequential"): cv.one_of(
                 "sequential", "nextPerRoute"
+            ),
+            cv.Optional(CONF_ARRIVAL_TIME_WINDOW, default=0): cv.int_range(
+                min=0, max=180
+            ),
+            cv.Optional(CONF_PAGE_TRANSITION, default="none"): cv.one_of(
+                "none", "fade", "scroll"
+            ),
+            cv.Optional(CONF_PAGE_DURATION, default=5000): cv.int_range(
+                min=1000, max=60000
+            ),
+            cv.Optional(CONF_TRANSITION_DURATION, default=700): cv.int_range(
+                min=100, max=5000
             ),
             cv.Optional(CONF_SCROLL_HEADSIGNS, default=False) : cv.boolean,
             cv.Optional(CONF_STOPS, default=[]): cv.ensure_list(
@@ -167,6 +183,10 @@ async def to_code(config):
     cg.add(var.set_display_departure_times(display_departure_times))
 
     cg.add(var.set_list_mode(config[CONF_LIST_MODE]))
+    cg.add(var.set_arrival_time_window(config[CONF_ARRIVAL_TIME_WINDOW]))
+    cg.add(var.set_page_transition(config[CONF_PAGE_TRANSITION]))
+    cg.add(var.set_page_duration(config[CONF_PAGE_DURATION]))
+    cg.add(var.set_transition_duration(config[CONF_TRANSITION_DURATION]))
     cg.add(var.set_scroll_headsigns(config[CONF_SCROLL_HEADSIGNS]))
 
     cg.add(var.set_limit(config[CONF_LIMIT]))

@@ -22,6 +22,16 @@ static constexpr int CONNECT_FAILURE_ERROR_THRESHOLD = 3;
 static constexpr int CONNECT_FAILURE_REBOOT_THRESHOLD = 15;
 static constexpr unsigned long HEARTBEAT_TIMEOUT_MS = 60000;
 static constexpr int STALE_TRIP_SECONDS = 60;
+static constexpr int MAX_SUBSCRIPTION_TRIPS = 20;
+
+static Color scale_color(const Color &color, float brightness) {
+  brightness = std::max(0.0f, std::min(1.0f, brightness));
+  return Color(
+    static_cast<uint8_t>(color.r * brightness),
+    static_cast<uint8_t>(color.g * brightness),
+    static_cast<uint8_t>(color.b * brightness)
+  );
+}
 
 static std::string compute_device_id() {
   uint8_t mac[6];
@@ -154,6 +164,10 @@ void TransitTracker::dump_config() {
   ESP_LOGCONFIG(TAG, "  Base URL: %s", this->base_url_.c_str());
   ESP_LOGCONFIG(TAG, "  Schedule: %s", this->schedule_string_.c_str());
   ESP_LOGCONFIG(TAG, "  Limit: %d", this->limit_);
+  ESP_LOGCONFIG(TAG, "  Arrival time window: %d minutes", this->arrival_time_window_);
+  ESP_LOGCONFIG(TAG, "  Page transition: %s", this->page_transition_.c_str());
+  ESP_LOGCONFIG(TAG, "  Page duration: %lu ms", this->page_duration_);
+  ESP_LOGCONFIG(TAG, "  Transition duration: %lu ms", this->transition_duration_);
   ESP_LOGCONFIG(TAG, "  List mode: %s", this->list_mode_.c_str());
   ESP_LOGCONFIG(TAG, "  Display departure times: %s", this->display_departure_times_ ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Scroll Headsigns: %s", this->scroll_headsigns_ ? "true" : "false");
@@ -218,7 +232,7 @@ void TransitTracker::send_subscribe_() {
       data["feedCode"] = this->feed_code_;
     }
     data["routeStopPairs"] = this->schedule_string_;
-    data["limit"] = this->limit_;
+    data["limit"] = this->arrival_time_window_ > 0 ? MAX_SUBSCRIPTION_TRIPS : this->limit_;
     data["sortByDeparture"] = this->display_departure_times_;
     data["listMode"] = this->list_mode_;
   });
@@ -372,7 +386,9 @@ const uint8_t realtime_icon[6][6] = {
   {3, 0, 2, 0, 1, 1}
 };
 
-void HOT TransitTracker::draw_realtime_icon_(int bottom_right_x, int bottom_right_y, unsigned long uptime) {
+void HOT TransitTracker::draw_realtime_icon_(
+    int bottom_right_x, int bottom_right_y, unsigned long uptime, float brightness
+) {
   const int num_frames = 6;
   const int idle_frame_duration = 3000;
   const int anim_frame_duration = 200;
@@ -403,7 +419,10 @@ void HOT TransitTracker::draw_realtime_icon_(int bottom_right_x, int bottom_righ
         continue;
       }
 
-      Color icon_color = is_segment_lit(segment_number) ? this->realtime_color_ : this->realtime_color_dark_;
+      Color icon_color = scale_color(
+        is_segment_lit(segment_number) ? this->realtime_color_ : this->realtime_color_dark_,
+        brightness
+      );
       this->display_->draw_pixel_at(bottom_right_x - (5 - j), bottom_right_y - (5 - i), icon_color);
     }
   }
@@ -411,10 +430,13 @@ void HOT TransitTracker::draw_realtime_icon_(int bottom_right_x, int bottom_righ
 
 void TransitTracker::draw_trip(
     const Trip &trip, int y_offset, int font_height, unsigned long uptime, uint rtc_now,
-    bool no_draw, int *headsign_overflow_out, int scroll_cycle_duration
+    bool no_draw, int *headsign_overflow_out, int scroll_cycle_duration, float brightness
 ) {
   if (!no_draw) {
-    this->display_->print(0, y_offset, this->font_, trip.route_color, display::TextAlign::TOP_LEFT, trip.route_name.c_str());
+    this->display_->print(
+      0, y_offset, this->font_, scale_color(trip.route_color, brightness),
+      display::TextAlign::TOP_LEFT, trip.route_name.c_str()
+    );
   }
 
   int route_width, _;
@@ -433,7 +455,10 @@ void TransitTracker::draw_trip(
 
   if (!no_draw) {
     Color time_color = trip.is_realtime ? this->realtime_color_ : Color(0xa7a7a7);
-    this->display_->print(this->display_->get_width() + 1, y_offset, this->font_, time_color, display::TextAlign::TOP_RIGHT, time_display.c_str());
+    this->display_->print(
+      this->display_->get_width() + 1, y_offset, this->font_,
+      scale_color(time_color, brightness), display::TextAlign::TOP_RIGHT, time_display.c_str()
+    );
   }
 
   if (trip.is_realtime) {
@@ -443,7 +468,7 @@ void TransitTracker::draw_trip(
       int icon_bottom_right_x = this->display_->get_width() - time_width - 2;
       int icon_bottom_right_y = y_offset + font_height - 6;
 
-      this->draw_realtime_icon_(icon_bottom_right_x, icon_bottom_right_y, uptime);
+      this->draw_realtime_icon_(icon_bottom_right_x, icon_bottom_right_y, uptime, brightness);
     }
   }
 
@@ -491,7 +516,10 @@ void TransitTracker::draw_trip(
   }
 
   this->display_->start_clipping(headsign_clipping_start, 0, headsign_clipping_end, this->display_->get_height());
-  this->display_->print(headsign_clipping_start - scroll_offset, y_offset, this->font_, trip.headsign.c_str());
+  this->display_->print(
+    headsign_clipping_start - scroll_offset, y_offset, this->font_,
+    scale_color(Color(0xFFFFFF), brightness), display::TextAlign::TOP_LEFT, trip.headsign.c_str()
+  );
   this->display_->end_clipping();
 }
 
@@ -528,23 +556,83 @@ void HOT TransitTracker::draw_schedule() {
 
   std::lock_guard<std::mutex> lock(this->schedule_state_.mutex);
 
-  if (this->schedule_state_.trips.empty()) {
+  int nominal_font_height = this->font_->get_ascender() + this->font_->get_descender();
+  unsigned long uptime = millis();
+  uint rtc_now = this->rtc_->now().timestamp;
+
+  auto is_visible = [this, rtc_now](const Trip &trip) {
+    if (this->arrival_time_window_ <= 0) {
+      return true;
+    }
+    time_t displayed_time = this->display_departure_times_ ? trip.departure_time : trip.arrival_time;
+    return displayed_time >= rtc_now - STALE_TRIP_SECONDS &&
+           displayed_time <= rtc_now + this->arrival_time_window_ * 60;
+  };
+
+  size_t visible_trip_count = 0;
+  for (const Trip &trip : this->schedule_state_.trips) {
+    if (is_visible(trip)) {
+      visible_trip_count++;
+    }
+  }
+
+  if (visible_trip_count == 0) {
     auto message = this->display_departure_times_ ? "No upcoming departures" : "No upcoming arrivals";
     this->draw_text_centered_(message, Color(0x252627));
     return;
   }
 
-  int nominal_font_height = this->font_->get_ascender() + this->font_->get_descender();
-  unsigned long uptime = millis();
-  uint rtc_now = this->rtc_->now().timestamp;
+  size_t first_trip = 0;
+  if (this->arrival_time_window_ > 0 && visible_trip_count > static_cast<size_t>(this->limit_)) {
+    size_t page_count = (visible_trip_count + this->limit_ - 1) / this->limit_;
+    if (page_count != this->arrival_page_count_) {
+      this->current_arrival_page_ = std::min(this->current_arrival_page_, page_count - 1);
+      this->previous_arrival_page_ = this->current_arrival_page_;
+      this->arrival_page_count_ = page_count;
+      this->last_arrival_page_change_ = uptime - (
+        this->page_transition_ == "none" ? 0 : this->transition_duration_
+      );
+    } else {
+      unsigned long elapsed = uptime - this->last_arrival_page_change_;
+      unsigned long page_cycle_duration = this->page_duration_ + (
+        this->page_transition_ == "none" ? 0 : this->transition_duration_
+      );
+      if (elapsed >= page_cycle_duration) {
+        size_t pages_elapsed = elapsed / page_cycle_duration;
+        size_t old_page = this->current_arrival_page_;
+        this->current_arrival_page_ = (this->current_arrival_page_ + pages_elapsed) % page_count;
+        this->previous_arrival_page_ = pages_elapsed == 1 ? old_page : this->current_arrival_page_;
+        this->last_arrival_page_change_ += pages_elapsed * page_cycle_duration;
+      }
+    }
+    first_trip = this->current_arrival_page_ * this->limit_;
+  } else {
+    this->current_arrival_page_ = 0;
+    this->previous_arrival_page_ = 0;
+    this->arrival_page_count_ = 0;
+    this->last_arrival_page_change_ = uptime;
+  }
+  size_t last_trip = std::min(first_trip + this->limit_, visible_trip_count);
 
   int scroll_cycle_duration = 0;
   if (this->scroll_headsigns_) {
     int largest_headsign_overflow = 0;
+    size_t visible_index = 0;
     for (const Trip &trip : this->schedule_state_.trips) {
+      if (!is_visible(trip)) {
+        continue;
+      }
+      if (visible_index < first_trip) {
+        visible_index++;
+        continue;
+      }
+      if (visible_index >= last_trip) {
+        break;
+      }
       int headsign_overflow;
       this->draw_trip(trip, 0, nominal_font_height, uptime, rtc_now, true, &headsign_overflow);
       largest_headsign_overflow = std::max(largest_headsign_overflow, headsign_overflow);
+      visible_index++;
     }
 
     if (largest_headsign_overflow > 0) {
@@ -554,17 +642,80 @@ void HOT TransitTracker::draw_schedule() {
   }
 
   int max_trips_height = (this->limit_ * this->font_->get_ascender()) + ((this->limit_ - 1) * this->font_->get_descender());
+  int page_transition_distance = this->limit_ * nominal_font_height + this->font_->get_descender();
   int y_offset = (this->display_->get_height() % max_trips_height) / 2;
 
   bool has_header_text = !this->header_text_.empty();
+  int header_y_offset = y_offset;
   if (has_header_text) {
-    this->display_->print(0, y_offset, this->font_, Color(0x00bdbd), display::TextAlign::LEFT, this->header_text_.c_str());
     y_offset += nominal_font_height;
   }
 
-  for (const Trip &trip : this->schedule_state_.trips) {
-    this->draw_trip(trip, y_offset, nominal_font_height, uptime, rtc_now, false, nullptr, scroll_cycle_duration);
-    y_offset += nominal_font_height;
+  auto draw_page = [&](size_t page, bool incoming, float progress, float brightness) {
+    size_t page_first_trip = page * this->limit_;
+    size_t page_last_trip = std::min(page_first_trip + this->limit_, visible_trip_count);
+    size_t visible_index = 0;
+    size_t row = 0;
+
+    for (const Trip &trip : this->schedule_state_.trips) {
+      if (!is_visible(trip)) {
+        continue;
+      }
+      if (visible_index < page_first_trip) {
+        visible_index++;
+        continue;
+      }
+      if (visible_index >= page_last_trip) {
+        break;
+      }
+
+      int transition_offset = 0;
+      if (this->page_transition_ == "scroll") {
+        transition_offset = incoming
+          ? static_cast<int>(page_transition_distance * (1.0f - progress))
+          : -static_cast<int>(page_transition_distance * progress);
+      }
+
+      this->draw_trip(
+        trip, y_offset + row * nominal_font_height + transition_offset,
+        nominal_font_height, uptime, rtc_now, false, nullptr, scroll_cycle_duration, brightness
+      );
+      visible_index++;
+      row++;
+    }
+  };
+
+  unsigned long transition_elapsed = uptime - this->last_arrival_page_change_;
+  bool is_transitioning =
+    this->arrival_page_count_ > 1 &&
+    this->current_arrival_page_ != this->previous_arrival_page_ &&
+    this->page_transition_ != "none" &&
+    transition_elapsed < this->transition_duration_;
+
+  if (!is_transitioning) {
+    draw_page(this->current_arrival_page_, true, 1.0f, 1.0f);
+  } else {
+    float progress = static_cast<float>(transition_elapsed) / this->transition_duration_;
+    if (this->page_transition_ == "fade") {
+      if (progress < 0.5f) {
+        draw_page(this->previous_arrival_page_, false, progress, 1.0f - progress * 2.0f);
+      } else {
+        draw_page(this->current_arrival_page_, true, progress, (progress - 0.5f) * 2.0f);
+      }
+    } else {
+      draw_page(this->previous_arrival_page_, false, progress, 1.0f);
+      draw_page(this->current_arrival_page_, true, progress, 1.0f);
+    }
+  }
+
+  if (has_header_text) {
+    this->display_->filled_rectangle(
+      0, 0, this->display_->get_width(), y_offset, Color(0x000000)
+    );
+    this->display_->print(
+      0, header_y_offset, this->font_, Color(0x00bdbd),
+      display::TextAlign::LEFT, this->header_text_.c_str()
+    );
   }
 }
 
