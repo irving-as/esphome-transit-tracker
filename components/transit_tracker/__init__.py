@@ -1,3 +1,4 @@
+from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components.display import Display
@@ -18,6 +19,9 @@ AUTO_LOAD = ["json"]
 
 transit_tracker_ns = cg.esphome_ns.namespace("transit_tracker")
 TransitTracker = transit_tracker_ns.class_("TransitTracker", cg.Component)
+
+SetArrivalTimeWindowAction = transit_tracker_ns.class_("SetArrivalTimeWindowAction", automation.Action)
+SetPageTransitionAction = transit_tracker_ns.class_("SetPageTransitionAction", automation.Action)
 
 UnitDisplay = transit_tracker_ns.enum("UnitDisplay")
 UNIT_DISPLAY_VALUES = {
@@ -231,3 +235,43 @@ async def to_code(config):
     )
 
     esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE", True)
+
+
+@automation.register_action(
+    "transit_tracker.set_arrival_time_window",
+    SetArrivalTimeWindowAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(TransitTracker),
+            cv.Required(CONF_ARRIVAL_TIME_WINDOW): cv.templatable(cv.int_range(min=0, max=180)),
+        },
+        key=CONF_ARRIVAL_TIME_WINDOW,
+    ),
+    synchronous=True,
+)
+async def transit_tracker_set_arrival_time_window_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    template_ = await cg.templatable(config[CONF_ARRIVAL_TIME_WINDOW], args, cg.int_)
+    cg.add(var.set_arrival_time_window(template_))
+    return var
+
+
+@automation.register_action(
+    "transit_tracker.set_page_transition",
+    SetPageTransitionAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(TransitTracker),
+            cv.Required(CONF_PAGE_TRANSITION): cv.templatable(cv.one_of("none", "fade", "scroll")),
+        },
+        key=CONF_PAGE_TRANSITION,
+    ),
+    synchronous=True,
+)
+async def transit_tracker_set_page_transition_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    template_ = await cg.templatable(config[CONF_PAGE_TRANSITION], args, cg.std_string)
+    cg.add(var.set_page_transition(template_))
+    return var

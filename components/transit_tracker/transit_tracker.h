@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/font/font.h"
@@ -143,6 +144,20 @@ class TransitTracker : public Component {
 
     Color realtime_color_ = Color(0x20FF00);
     Color realtime_color_dark_ = Color(0x00A700);
+};
+
+template<typename... Ts> class SetArrivalTimeWindowAction : public Action<Ts...>, public Parented<TransitTracker> {
+  public:
+    TEMPLATABLE_VALUE(int, arrival_time_window)
+
+    void play(const Ts &...x) override { this->parent_->set_arrival_time_window(this->arrival_time_window_.value(x...)); }
+};
+
+template<typename... Ts> class SetPageTransitionAction : public Action<Ts...>, public Parented<TransitTracker> {
+  public:
+    TEMPLATABLE_VALUE(std::string, page_transition)
+
+    void play(const Ts &...x) override { this->parent_->set_page_transition(this->page_transition_.value(x...)); }
 };
 
 
